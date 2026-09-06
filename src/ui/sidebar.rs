@@ -35,6 +35,7 @@ pub(crate) struct AgentPanelEntry {
     pub state: AgentState,
     pub seen: bool,
     pub last_agent_state_change_seq: Option<u64>,
+    pub importance: crate::api::schema::Importance,
     pub state_labels: std::collections::HashMap<String, String>,
     pub tokens: std::collections::HashMap<String, String>,
 }
@@ -175,6 +176,7 @@ fn collect_agent_panel_entries_with_runtimes(
                         state: detail.state,
                         seen: detail.seen,
                         last_agent_state_change_seq: detail.last_agent_state_change_seq,
+                        importance: detail.importance,
                         state_labels: detail.state_labels,
                         tokens: detail.tokens,
                     }
@@ -432,7 +434,65 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             }
         }
     }
-    entries
+    order_entries_by_importance(app, entries)
+}
+
+/// Reorder the flat entry list by user-assigned importance without breaking
+/// worktree groups: each block (a root row plus its indented children) moves as
+/// a unit, ranked by the highest importance inside the block; children stay
+/// under their parent and are stably ordered by their own importance. Ties keep
+/// the manual `app.workspaces` order because every sort here is stable.
+fn order_entries_by_importance(
+    app: &AppState,
+    entries: Vec<WorkspaceListEntry>,
+) -> Vec<WorkspaceListEntry> {
+    if app.workspaces.iter().all(|ws| ws.importance.is_normal()) {
+        return entries;
+    }
+    let rank = |entry: &WorkspaceListEntry| match entry {
+        WorkspaceListEntry::Workspace { ws_idx, .. } => app
+            .workspaces
+            .get(*ws_idx)
+            .map(|ws| ws.importance.rank())
+            .unwrap_or_default(),
+    };
+
+    let mut blocks: Vec<Vec<WorkspaceListEntry>> = Vec::new();
+    for entry in entries {
+        let indented = matches!(entry, WorkspaceListEntry::Workspace { indented: true, .. });
+        match (indented, blocks.last_mut()) {
+            (true, Some(block)) => block.push(entry),
+            _ => blocks.push(vec![entry]),
+        }
+    }
+    for block in &mut blocks {
+        if block.len() > 2 {
+            block[1..].sort_by_key(|entry| std::cmp::Reverse(rank(entry)));
+        }
+    }
+    blocks.sort_by_key(|block| std::cmp::Reverse(block.iter().map(rank).max().unwrap_or_default()));
+    blocks.into_iter().flatten().collect()
+}
+
+/// Style for the numbered space badge: accent pill for high, dim surface for
+/// low, plain muted digits for normal (brighter when the row is highlighted).
+pub(crate) fn workspace_importance_badge_style(
+    importance: crate::api::schema::Importance,
+    highlighted: bool,
+    p: &Palette,
+) -> Style {
+    match importance {
+        crate::api::schema::Importance::High => Style::default()
+            .fg(p.panel_bg)
+            .bg(p.accent)
+            .add_modifier(Modifier::BOLD),
+        crate::api::schema::Importance::Low => Style::default()
+            .fg(p.overlay0)
+            .bg(p.surface_dim)
+            .add_modifier(Modifier::DIM),
+        crate::api::schema::Importance::Normal if highlighted => Style::default().fg(p.text),
+        crate::api::schema::Importance::Normal => Style::default().fg(p.overlay0),
+    }
 }
 
 pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
@@ -1326,12 +1386,21 @@ fn render_workspace_list(
             },
         );
 
+        // Visible position (matches `prefix+N`) rendered as an importance badge.
+        let position = entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, WorkspaceListEntry::Workspace { ws_idx, .. } if *ws_idx == i)
+            })
+            .map(|position| position + 1);
+        let badge_style = workspace_importance_badge_style(ws.importance, highlighted, p);
+
         for (row_index, resolved) in rows.iter().enumerate() {
             if row_index as u16 >= row_height || row_y + row_index as u16 >= list_bottom {
                 break;
             }
             let mut spans = Vec::new();
-            let prefix_width = if card.indented {
+            let mut prefix_width = if card.indented {
                 spans.push(Span::raw("   "));
                 if row_index == 0 {
                     spans.push(Span::styled(
@@ -1354,6 +1423,14 @@ fn render_workspace_list(
                 spans.push(Span::raw("   "));
                 3
             };
+            if row_index == 0 {
+                if let Some(position) = position {
+                    let badge = position.to_string();
+                    prefix_width += display_width_u16(&badge) + 1;
+                    spans.push(Span::styled(badge, badge_style));
+                    spans.push(Span::raw(" "));
+                }
+            }
             let trailing_width = if row_index == 0 && parent_group.is_some() {
                 2
             } else {
@@ -1518,9 +1595,14 @@ fn render_agent_detail(
         };
         let agent_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
         let state_icon = state_icon(detail.state, detail.seen, app.status_indicators, p);
+        let importance_marker = agent_importance_marker(detail.importance, p);
 
         for (row_index, resolved) in rows.iter().take(height as usize).enumerate() {
-            let mut spans = vec![Span::raw(if row_index == 0 { " " } else { "   " })];
+            let mut spans = vec![match (row_index, importance_marker) {
+                (0, Some((marker, style))) => Span::styled(marker, style),
+                (0, None) => Span::raw(" "),
+                _ => Span::raw("   "),
+            }];
             spans.extend(resolved_token_spans(
                 resolved,
                 state_icon,
@@ -1545,6 +1627,26 @@ fn render_agent_detail(
 
     if let Some(track) = scrollbar_rect {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+    }
+}
+
+/// One-cell priority marker shown in front of an agent row: `▲` high, `▽` low,
+/// nothing for normal. Returns `&'static str` so the render hot path allocates
+/// nothing.
+pub(crate) fn agent_importance_marker(
+    importance: crate::api::schema::Importance,
+    p: &Palette,
+) -> Option<(&'static str, Style)> {
+    match importance {
+        crate::api::schema::Importance::High => Some((
+            "▲",
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+        )),
+        crate::api::schema::Importance::Low => Some((
+            "▽",
+            Style::default().fg(p.overlay0).add_modifier(Modifier::DIM),
+        )),
+        crate::api::schema::Importance::Normal => None,
     }
 }
 
@@ -3173,6 +3275,77 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                     indented: true,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_list_entries_order_blocks_by_importance_and_keep_groups_intact() {
+        use crate::api::schema::Importance;
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
+            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
+            workspace_with_worktree_space("review", Some("repo-key"), "/repo/herdr-review"),
+            Workspace::test_new("notes"),
+            Workspace::test_new("docs"),
+        ];
+        let flat = |app: &AppState| {
+            workspace_list_entries(app)
+                .into_iter()
+                .map(|entry| match entry {
+                    WorkspaceListEntry::Workspace { ws_idx, indented } => (ws_idx, indented),
+                })
+                .collect::<Vec<_>>()
+        };
+        // All normal: the manual order is untouched.
+        assert_eq!(
+            flat(&app),
+            vec![(0, false), (1, true), (2, true), (3, false), (4, false)]
+        );
+
+        app.workspaces[4].set_importance(Importance::High);
+        app.workspaces[2].set_importance(Importance::High);
+        app.workspaces[3].set_importance(Importance::Low);
+        // The worktree group is lifted by its most important child (which also
+        // moves to the front of its siblings); the tie with `docs` keeps manual
+        // order; `notes` sinks to the bottom.
+        assert_eq!(
+            flat(&app),
+            vec![(0, false), (2, true), (1, true), (4, false), (3, false)]
+        );
+        assert_eq!(app.visible_workspace_order(), vec![0, 2, 1, 4, 3]);
+        assert_eq!(app.workspace_at_visible_position(3), Some(4));
+    }
+
+    #[test]
+    fn importance_marker_and_badge_styles_distinguish_levels() {
+        use crate::api::schema::Importance;
+        let p = crate::app::state::Palette::catppuccin();
+        assert_eq!(
+            agent_importance_marker(Importance::High, &p).map(|(marker, _)| marker),
+            Some("▲")
+        );
+        assert_eq!(
+            agent_importance_marker(Importance::Low, &p).map(|(marker, _)| marker),
+            Some("▽")
+        );
+        assert!(agent_importance_marker(Importance::Normal, &p).is_none());
+
+        assert_eq!(
+            workspace_importance_badge_style(Importance::High, false, &p).bg,
+            Some(p.accent)
+        );
+        assert_eq!(
+            workspace_importance_badge_style(Importance::Low, false, &p).bg,
+            Some(p.surface_dim)
+        );
+        assert_eq!(
+            workspace_importance_badge_style(Importance::Normal, false, &p).bg,
+            None
+        );
+        assert_eq!(
+            workspace_importance_badge_style(Importance::Normal, true, &p).fg,
+            Some(p.text)
         );
     }
 }

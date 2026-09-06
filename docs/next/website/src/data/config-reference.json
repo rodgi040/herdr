@@ -620,6 +620,12 @@
           "description": "Focus an agent by index 1-9. Unset by default."
         },
         {
+          "key": "keys.agent_importance",
+          "type": "keybinding",
+          "default": "\"prefix+ctrl+1..3\"",
+          "description": "Set the focused agent's priority: 1 = high, 2 = normal, 3 = low."
+        },
+        {
           "key": "keys.remote_image_paste",
           "type": "string",
           "default": "\"ctrl+v\"",
@@ -672,6 +678,12 @@
           "type": "keybinding",
           "default": "unset",
           "description": "Switch to workspace 1-9 from prefix mode. Unset by default."
+        },
+        {
+          "key": "keys.workspace_importance",
+          "type": "keybinding",
+          "default": "\"prefix+ctrl+shift+1..3\"",
+          "description": "Set the active (or selected) space's priority: 1 = high, 2 = normal, 3 = low."
         },
         {
           "key": "keys.close_tab",

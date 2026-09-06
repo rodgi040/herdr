@@ -52,6 +52,10 @@ pub struct WorkspaceSnapshot {
     pub id: Option<String>,
     #[serde(default)]
     pub custom_name: Option<String>,
+    /// User-assigned priority; omitted when normal so unchanged sessions keep
+    /// their snapshot shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<crate::api::schema::Importance>,
     pub identity_cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
@@ -107,6 +111,9 @@ pub struct PaneSnapshot {
     pub agent_session: Option<PaneAgentSessionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    /// User-assigned priority; omitted when normal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<crate::api::schema::Importance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +171,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
             next_public_tab_number: 0,
             tabs: vec![tab],
             active_tab: 0,
+            importance: None,
         }
     }
 }
@@ -287,6 +295,7 @@ fn capture_workspace(
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
         custom_name: ws.custom_name.clone(),
+        importance: (!ws.importance.is_normal()).then_some(ws.importance),
         identity_cwd: ws
             .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .unwrap_or_else(|| ws.identity_cwd.clone()),
@@ -368,6 +377,9 @@ fn capture_tab(
                 managed_agent_kind,
                 agent_session,
                 launch_argv,
+                importance: terminal
+                    .map(|terminal| terminal.importance)
+                    .filter(|importance| !importance.is_normal()),
             },
         );
     }
@@ -648,6 +660,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                importance: None,
             },
         );
         panes.insert(
@@ -659,6 +672,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                importance: None,
             },
         );
 
@@ -686,6 +700,7 @@ mod tests {
                     root_pane: Some(0),
                 }],
                 active_tab: 0,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1207,6 +1222,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                importance: None,
             },
         );
         panes.insert(
@@ -1220,6 +1236,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                importance: None,
             },
         );
 
@@ -1248,6 +1265,7 @@ mod tests {
                     root_pane: Some(0),
                 }],
                 active_tab: 0,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1263,5 +1281,51 @@ mod tests {
             restored.workspaces[0].tabs[0].panes[&0].cwd,
             PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test")
         );
+    }
+
+    #[test]
+    fn importance_is_captured_only_when_set_and_defaults_when_missing() {
+        use crate::api::schema::Importance;
+        let mut state = state_with_workspaces(&["plain", "urgent"]);
+        state.workspaces[1].set_importance(Importance::High);
+        let pane_id = state.workspaces[1].tabs[0].root_pane;
+        let terminal_id = state.workspaces[1].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_importance(Importance::Low);
+
+        let snap = capture_from_state(&state);
+        assert_eq!(snap.workspaces[0].importance, None);
+        assert_eq!(snap.workspaces[1].importance, Some(Importance::High));
+        let plain_pane = snap.workspaces[0].tabs[0].panes.values().next().unwrap();
+        assert_eq!(plain_pane.importance, None);
+        let urgent_pane = snap.workspaces[1].tabs[0].panes.values().next().unwrap();
+        assert_eq!(urgent_pane.importance, Some(Importance::Low));
+
+        // Unchanged sessions keep their snapshot shape.
+        assert!(!serde_json::to_string(&snap.workspaces[0])
+            .unwrap()
+            .contains("importance"));
+
+        let json = serde_json::to_string(&snap).unwrap();
+        let restored = parse_snapshot(&json).unwrap();
+        assert_eq!(restored.workspaces[1].importance, Some(Importance::High));
+        assert_eq!(
+            restored.workspaces[1].tabs[0]
+                .panes
+                .values()
+                .next()
+                .unwrap()
+                .importance,
+            Some(Importance::Low)
+        );
+
+        // Snapshots written before the field existed parse with no importance.
+        let legacy = parse_snapshot(session_fixture("current-herdr")).unwrap();
+        assert!(legacy.workspaces.iter().all(|ws| ws.importance.is_none()));
     }
 }

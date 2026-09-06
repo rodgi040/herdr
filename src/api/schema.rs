@@ -73,6 +73,8 @@ pub enum Method {
     WorkspaceFocus(WorkspaceTarget),
     #[serde(rename = "workspace.rename")]
     WorkspaceRename(WorkspaceRenameParams),
+    #[serde(rename = "workspace.importance.set")]
+    WorkspaceImportanceSet(WorkspaceImportanceSetParams),
     #[serde(rename = "workspace.move")]
     WorkspaceMove(WorkspaceMoveParams),
     #[serde(rename = "workspace.move_block")]
@@ -119,6 +121,8 @@ pub enum Method {
     AgentViewSet(AgentViewSetParams),
     #[serde(rename = "agent.view.clear")]
     AgentViewClear(AgentViewClearParams),
+    #[serde(rename = "agent.importance.set")]
+    AgentImportanceSet(AgentImportanceSetParams),
     #[serde(rename = "agent.focus")]
     AgentFocus(AgentTarget),
     #[serde(rename = "agent.start")]

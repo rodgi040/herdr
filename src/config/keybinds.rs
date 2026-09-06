@@ -324,6 +324,7 @@ pub struct Keybinds {
     pub previous_agent: ActionKeybinds,
     pub next_agent: ActionKeybinds,
     pub focus_agent: Vec<IndexedKeybind>,
+    pub agent_importance: Vec<IndexedKeybind>,
     pub new_tab: ActionKeybinds,
     pub rename_tab: ActionKeybinds,
     pub previous_tab: ActionKeybinds,
@@ -332,6 +333,7 @@ pub struct Keybinds {
     pub move_tab_next: ActionKeybinds,
     pub switch_tab: Vec<IndexedKeybind>,
     pub switch_workspace: Vec<IndexedKeybind>,
+    pub workspace_importance: Vec<IndexedKeybind>,
     pub close_tab: ActionKeybinds,
     pub rename_pane: ActionKeybinds,
     pub edit_scrollback: ActionKeybinds,
@@ -492,6 +494,7 @@ impl Config {
             previous_agent: empty_action!(),
             next_agent: empty_action!(),
             focus_agent: Vec::new(),
+            agent_importance: Vec::new(),
             new_tab: empty_action!(),
             rename_tab: empty_action!(),
             previous_tab: empty_action!(),
@@ -500,6 +503,7 @@ impl Config {
             move_tab_next: empty_action!(),
             switch_tab: Vec::new(),
             switch_workspace: Vec::new(),
+            workspace_importance: Vec::new(),
             close_tab: empty_action!(),
             rename_pane: empty_action!(),
             edit_scrollback: empty_action!(),
@@ -551,6 +555,17 @@ impl Config {
             };
         }
         macro_rules! apply_indexed {
+            ($target:expr, $field:ident, $source:expr) => {
+                if field_source!($field) == $source {
+                    $target = parse_indexed_bindings(
+                        concat!("keys.", stringify!($field)),
+                        &self.keys.$field,
+                        &mut registry,
+                        &mut diagnostics,
+                        $source,
+                    );
+                }
+            };
             (
                 $target:expr,
                 $field:ident,
@@ -629,6 +644,7 @@ impl Config {
                 &self.keys.indexed.agents,
                 source
             );
+            apply_indexed!(keybinds.agent_importance, agent_importance, source);
             apply_action!(keybinds.new_tab, new_tab, source);
             apply_action!(keybinds.rename_tab, rename_tab, source);
             apply_action!(keybinds.previous_tab, previous_tab, source);
@@ -647,6 +663,7 @@ impl Config {
                 &self.keys.indexed.workspaces,
                 source
             );
+            apply_indexed!(keybinds.workspace_importance, workspace_importance, source);
             apply_action!(keybinds.close_tab, close_tab, source);
             apply_action!(keybinds.rename_pane, rename_pane, source);
             apply_action!(keybinds.edit_scrollback, edit_scrollback, source);
@@ -1067,8 +1084,8 @@ fn parse_binding_string(raw: &str) -> Option<ParsedBinding> {
         (false, trimmed)
     };
 
-    if let Some(range_modifiers) = parse_range_modifiers(body) {
-        let bindings = (1..=9)
+    if let Some((range_modifiers, range_end)) = parse_range_modifiers(body) {
+        let bindings = (1..=range_end)
             .map(|idx| {
                 let combo = (
                     KeyCode::Char(char::from_digit(idx, 10).unwrap_or('1')),
@@ -1177,21 +1194,29 @@ fn parse_modifier_token(token: &str) -> Option<KeyModifiers> {
     }
 }
 
-fn parse_range_modifiers(s: &str) -> Option<KeyModifiers> {
+/// Parse the modifier part of an indexed range binding such as `ctrl+1..9` or
+/// `ctrl+1..3`. Returns the modifiers and the inclusive range end.
+fn parse_range_modifiers(s: &str) -> Option<(KeyModifiers, u32)> {
     let mut modifiers = KeyModifiers::empty();
-    let mut saw_range = false;
+    let mut range_end = None;
     for part in s.split('+') {
         let trimmed = part.trim();
-        if trimmed == "1..9" {
-            if saw_range {
+        if let Some(end) = parse_range_end(trimmed) {
+            if range_end.is_some() {
                 return None;
             }
-            saw_range = true;
+            range_end = Some(end);
         } else {
             modifiers |= parse_modifier_token(trimmed)?;
         }
     }
-    saw_range.then_some(modifiers)
+    range_end.map(|end| (modifiers, end))
+}
+
+/// Accept `1..N` for `N` in `2..=9`; `1..9` is the full number row.
+fn parse_range_end(token: &str) -> Option<u32> {
+    let end = token.strip_prefix("1..")?.parse::<u32>().ok()?;
+    (2..=9).contains(&end).then_some(end)
 }
 
 fn parse_modifier_combo(s: &str) -> Option<KeyModifiers> {
@@ -2294,5 +2319,68 @@ width = "80%"
             .collect_diagnostics()
             .iter()
             .any(|diag| diag.contains("popup size on non-popup custom command")));
+    }
+
+    #[test]
+    fn importance_defaults_bind_prefix_ctrl_digits_one_to_three() {
+        let config = Config::default();
+        let kb = config.keybinds();
+        assert_eq!(kb.agent_importance.len(), 3);
+        assert_eq!(
+            kb.agent_importance[0].trigger,
+            BindingTrigger::Prefix((KeyCode::Char('1'), KeyModifiers::CONTROL))
+        );
+        assert_eq!(kb.agent_importance[2].label, "prefix+ctrl+3");
+        assert_eq!(kb.workspace_importance.len(), 3);
+        assert_eq!(
+            kb.workspace_importance[1].trigger,
+            BindingTrigger::Prefix((
+                KeyCode::Char('2'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            ))
+        );
+        assert_eq!(kb.workspace_importance[1].label, "prefix+ctrl+shift+2");
+        assert!(
+            config
+                .collect_diagnostics()
+                .iter()
+                .all(|diag| !diag.contains("importance")),
+            "default importance bindings must not conflict"
+        );
+    }
+
+    #[test]
+    fn indexed_ranges_can_stop_before_nine() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+agent_importance = "prefix+alt+1..5"
+"#,
+        )
+        .unwrap();
+        let kb = config.keybinds();
+        assert_eq!(kb.agent_importance.len(), 5);
+        assert_eq!(kb.agent_importance[4].label, "prefix+alt+5");
+        assert_eq!(
+            kb.agent_importance[4].trigger,
+            BindingTrigger::Prefix((KeyCode::Char('5'), KeyModifiers::ALT))
+        );
+        assert_eq!(kb.switch_tab.len(), 9);
+
+        for invalid in ["prefix+alt+1..1", "prefix+alt+1..10", "prefix+alt+2..5"] {
+            let config: Config =
+                toml::from_str(&format!("[keys]\nagent_importance = \"{invalid}\"\n")).unwrap();
+            let diagnostics = config.collect_diagnostics();
+            assert!(
+                config.keybinds().agent_importance.is_empty(),
+                "{invalid} should be rejected"
+            );
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diag| diag.contains("keys.agent_importance")),
+                "{invalid}: {diagnostics:?}"
+            );
+        }
     }
 }

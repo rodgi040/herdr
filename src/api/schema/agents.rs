@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::common::{AgentStatus, ReadFormat, ReadSource};
+use super::common::{AgentStatus, Importance, ReadFormat, ReadSource};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentReadParams {
@@ -44,6 +44,12 @@ pub struct AgentRenameParams {
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgentImportanceSetParams {
+    pub target: String,
+    pub importance: Importance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -105,6 +111,7 @@ pub enum AgentViewBuiltinField {
     Agent,
     Seen,
     StateChangeSeq,
+    Importance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -148,6 +155,7 @@ pub enum AgentViewBuiltinSortField {
     Agent,
     Seen,
     StateChangeSeq,
+    Importance,
 }
 
 #[derive(
@@ -196,6 +204,8 @@ pub struct AgentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_agent: Option<String>,
     pub agent_status: AgentStatus,
+    #[serde(default, skip_serializing_if = "Importance::is_normal")]
+    pub importance: Importance,
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub screen_detection_skipped: bool,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

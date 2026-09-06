@@ -410,6 +410,7 @@ fn restore_workspace(
         Some(Workspace {
             id: workspace_id,
             custom_name: snap.custom_name.clone(),
+            importance: snap.importance.unwrap_or_default(),
             identity_cwd: snap.identity_cwd.clone(),
             cached_identity_cwd: snap.identity_cwd.clone(),
             cached_auto_label,
@@ -491,6 +492,7 @@ fn restore_tab(
         };
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
+        let saved_importance = saved_pane.and_then(|p| p.importance);
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
@@ -539,6 +541,9 @@ fn restore_tab(
                 .with_pending_agent_resume_plan(plan);
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
+            }
+            if let Some(importance) = saved_importance {
+                terminal.set_importance(importance);
             }
             if let Some(session) = restored_agent_session {
                 terminal.set_persisted_agent_session(session);
@@ -636,6 +641,9 @@ fn restore_tab(
                 }
                 if let Some(label) = saved_label {
                     terminal.set_manual_label(label);
+                }
+                if let Some(importance) = saved_importance {
+                    terminal.set_importance(importance);
                 }
                 if let Some(session) = restored_agent_session {
                     terminal.set_persisted_agent_session(session);
@@ -1198,6 +1206,7 @@ mod tests {
                                 value: "opencode-session".into(),
                             }),
                             launch_argv: None,
+                            importance: None,
                         },
                     )]),
                     zoomed: false,
@@ -1205,6 +1214,7 @@ mod tests {
                     root_pane: Some(0),
                 }],
                 active_tab: 0,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1279,6 +1289,7 @@ mod tests {
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 launch_argv: None,
+                                importance: None,
                             },
                         ),
                         (
@@ -1290,6 +1301,7 @@ mod tests {
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 launch_argv: None,
+                                importance: None,
                             },
                         ),
                     ]),
@@ -1298,6 +1310,7 @@ mod tests {
                     root_pane: Some(10),
                 }],
                 active_tab: 0,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1343,6 +1356,7 @@ mod tests {
                     managed_agent_kind: None,
                     agent_session: None,
                     launch_argv: None,
+                    importance: None,
                 },
             )
         };
@@ -1358,6 +1372,7 @@ mod tests {
                 value: "codex-session".into(),
             }),
             launch_argv: None,
+            importance: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1405,6 +1420,7 @@ mod tests {
                     },
                 ],
                 active_tab: 3,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1467,6 +1483,7 @@ mod tests {
                 root_pane: Some(10),
             }],
             active_tab: 0,
+            importance: None,
         };
         let mut next_public_pane_number = 1;
 
@@ -1509,6 +1526,7 @@ mod tests {
                                 value: "codex-session".into(),
                             }),
                             launch_argv: None,
+                            importance: None,
                         },
                     )]),
                     zoomed: false,
@@ -1516,6 +1534,7 @@ mod tests {
                     root_pane: Some(0),
                 }],
                 active_tab: 0,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1670,6 +1689,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                importance: None,
             },
         );
         let history = SessionHistorySnapshot {
@@ -1710,6 +1730,7 @@ mod tests {
                     root_pane: Some(0),
                 }],
                 active_tab: 0,
+                importance: None,
             }],
             active: Some(0),
             selected: 0,
@@ -1718,5 +1739,72 @@ mod tests {
             collapsed_space_keys: Default::default(),
         };
         (snapshot, history)
+    }
+
+    #[tokio::test]
+    async fn restore_rehydrates_workspace_and_pane_importance() {
+        use crate::api::schema::Importance;
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = SessionSnapshot {
+            version: super::super::snapshot::SNAPSHOT_VERSION,
+            workspaces: vec![WorkspaceSnapshot {
+                id: Some("workspace".into()),
+                custom_name: None,
+                importance: Some(Importance::High),
+                identity_cwd: cwd.clone(),
+                worktree_space: None,
+                public_pane_numbers: HashMap::new(),
+                next_public_pane_number: 0,
+                public_tab_numbers: Vec::new(),
+                next_public_tab_number: 0,
+                tabs: vec![TabSnapshot {
+                    custom_name: None,
+                    layout: LayoutSnapshot::Pane(0),
+                    panes: HashMap::from([(
+                        0,
+                        super::super::snapshot::PaneSnapshot {
+                            cwd,
+                            label: None,
+                            agent_name: None,
+                            managed_agent_kind: None,
+                            agent_session: None,
+                            launch_argv: None,
+                            importance: Some(Importance::Low),
+                        },
+                    )]),
+                    zoomed: false,
+                    focused: Some(0),
+                    root_pane: Some(0),
+                }],
+                active_tab: 0,
+            }],
+            active: Some(0),
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: Default::default(),
+        };
+        let (events, _event_rx) = mpsc::channel(4);
+
+        let (workspaces, terminals, _runtimes) = restore(
+            &snapshot,
+            None,
+            24,
+            80,
+            0,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(RenderSignal::new()),
+        );
+
+        assert_eq!(workspaces[0].importance, Importance::High);
+        let terminal = terminals
+            .values()
+            .next()
+            .expect("restored terminal should exist");
+        assert_eq!(terminal.importance, Importance::Low);
     }
 }

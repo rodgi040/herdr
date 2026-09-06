@@ -156,6 +156,61 @@ pub enum AgentStatus {
     Unknown,
 }
 
+/// User-assigned priority for agents and spaces. Sorting puts `high` first and
+/// `low` last; `normal` is the default and renders without a marker.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Importance {
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+impl Importance {
+    /// Indexed keybind order: `1` = high, `2` = normal, `3` = low.
+    pub const KEY_ORDER: [Importance; 3] = [Importance::High, Importance::Normal, Importance::Low];
+
+    /// Sort rank; higher values sort first.
+    pub fn rank(self) -> u8 {
+        match self {
+            Importance::Low => 0,
+            Importance::Normal => 1,
+            Importance::High => 2,
+        }
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Importance::Normal)
+    }
+
+    /// Resolve a zero-based indexed keybind slot (`1..3`) to an importance level.
+    pub fn from_key_index(index: usize) -> Option<Self> {
+        Self::KEY_ORDER.get(index).copied()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Importance::Low => "low",
+            Importance::Normal => "normal",
+            Importance::High => "high",
+        }
+    }
+}
+
 pub(crate) fn default_true() -> bool {
     true
 }

@@ -130,6 +130,8 @@ pub struct TerminalState {
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
+    /// User-assigned priority; orders the agent panel and persists in snapshots.
+    pub importance: crate::api::schema::Importance,
     pub agent_name: Option<String>,
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
@@ -164,6 +166,7 @@ impl TerminalState {
             persisted_agent_session: None,
             terminal_title: None,
             manual_label: None,
+            importance: crate::api::schema::Importance::default(),
             agent_name: None,
             agent_name_owner: None,
             managed_agent: None,
@@ -1864,6 +1867,15 @@ impl TerminalState {
 
     pub fn clear_manual_label(&mut self) {
         self.manual_label = None;
+    }
+
+    /// Set the user-assigned importance. Returns `true` when the value changed.
+    pub fn set_importance(&mut self, importance: crate::api::schema::Importance) -> bool {
+        if self.importance == importance {
+            return false;
+        }
+        self.importance = importance;
+        true
     }
 
     pub fn set_agent_name(&mut self, name: String) {

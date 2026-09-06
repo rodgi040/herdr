@@ -1,8 +1,9 @@
 use crate::api::schema::{
-    EmptyParams, LayoutSetSplitRatioParams, Method, PaneFocusDirectionParams, PaneInputSetParams,
-    PaneRenameParams, PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget,
-    PaneZoomParams, TabCreateParams, TabMoveParams, TabRenameParams, TabTarget,
-    WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceMoveBlockParams, WorkspaceMoveParams,
+    AgentImportanceSetParams, EmptyParams, LayoutSetSplitRatioParams, Method,
+    PaneFocusDirectionParams, PaneInputSetParams, PaneRenameParams, PaneResizeParams,
+    PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomParams, TabCreateParams, TabMoveParams,
+    TabRenameParams, TabTarget, WorkspaceCloseParams, WorkspaceCreateParams,
+    WorkspaceImportanceSetParams, WorkspaceMoveBlockParams, WorkspaceMoveParams,
     WorkspaceRenameParams, WorkspaceTarget, WorktreeCreateParams, WorktreeOpenParams,
     WorktreeRemoveParams,
 };
@@ -44,6 +45,22 @@ impl App {
         params: WorkspaceRenameParams,
     ) -> String {
         self.dispatch_runtime_mutation(id, Method::WorkspaceRename(params))
+    }
+
+    pub(crate) fn runtime_workspace_importance_set(
+        &mut self,
+        id: &'static str,
+        params: WorkspaceImportanceSetParams,
+    ) -> String {
+        self.dispatch_runtime_mutation(id, Method::WorkspaceImportanceSet(params))
+    }
+
+    pub(crate) fn runtime_agent_importance_set(
+        &mut self,
+        id: &'static str,
+        params: AgentImportanceSetParams,
+    ) -> String {
+        self.dispatch_runtime_mutation(id, Method::AgentImportanceSet(params))
     }
 
     pub(crate) fn runtime_workspace_move(

@@ -757,6 +757,15 @@
           ],
           "type": "string"
         },
+        "Importance": {
+          "description": "User-assigned priority for agents and spaces. Sorting puts `high` first and\n`low` last; `normal` is the default and renders without a marker.",
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ],
+          "type": "string"
+        },
         "PaneInfo": {
           "properties": {
             "agent": {
@@ -798,6 +807,9 @@
                 "string",
                 "null"
               ]
+            },
+            "importance": {
+              "$ref": "#/schemas/event/$defs/Importance"
             },
             "label": {
               "type": [
@@ -1079,6 +1091,9 @@
             "focused": {
               "type": "boolean"
             },
+            "importance": {
+              "$ref": "#/schemas/event/$defs/Importance"
+            },
             "label": {
               "type": "string"
             },
@@ -1222,6 +1237,21 @@
     },
     "request": {
       "$defs": {
+        "AgentImportanceSetParams": {
+          "properties": {
+            "importance": {
+              "$ref": "#/schemas/request/$defs/Importance"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "target",
+            "importance"
+          ],
+          "type": "object"
+        },
         "AgentPromptParams": {
           "properties": {
             "target": {
@@ -1395,7 +1425,8 @@
             "pane_id",
             "agent",
             "seen",
-            "state_change_seq"
+            "state_change_seq",
+            "importance"
           ],
           "type": "string"
         },
@@ -1408,7 +1439,8 @@
             "status",
             "agent",
             "seen",
-            "state_change_seq"
+            "state_change_seq",
+            "importance"
           ],
           "type": "string"
         },
@@ -2091,6 +2123,15 @@
             "match_event"
           ],
           "type": "object"
+        },
+        "Importance": {
+          "description": "User-assigned priority for agents and spaces. Sorting puts `high` first and\n`low` last; `normal` is the default and renders without a marker.",
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ],
+          "type": "string"
         },
         "IntegrationInstallParams": {
           "properties": {
@@ -4186,6 +4227,21 @@
           },
           "type": "object"
         },
+        "WorkspaceImportanceSetParams": {
+          "properties": {
+            "importance": {
+              "$ref": "#/schemas/request/$defs/Importance"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "importance"
+          ],
+          "type": "object"
+        },
         "WorkspaceMoveBlockParams": {
           "properties": {
             "before_workspace_id": {
@@ -4696,6 +4752,22 @@
         {
           "properties": {
             "method": {
+              "const": "workspace.importance.set",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceImportanceSetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "workspace.move",
               "type": "string"
             },
@@ -5053,6 +5125,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/AgentViewClearParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "agent.importance.set",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/AgentImportanceSetParams"
             }
           },
           "required": [
@@ -6178,6 +6266,9 @@
                 "null"
               ]
             },
+            "importance": {
+              "$ref": "#/schemas/success_response/$defs/Importance"
+            },
             "interactive_ready": {
               "type": "boolean"
             },
@@ -7072,6 +7163,15 @@
           ],
           "type": "string"
         },
+        "Importance": {
+          "description": "User-assigned priority for agents and spaces. Sorting puts `high` first and\n`low` last; `normal` is the default and renders without a marker.",
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ],
+          "type": "string"
+        },
         "InstalledPluginInfo": {
           "properties": {
             "actions": {
@@ -7458,6 +7558,9 @@
                 "string",
                 "null"
               ]
+            },
+            "importance": {
+              "$ref": "#/schemas/success_response/$defs/Importance"
             },
             "label": {
               "type": [
@@ -9963,6 +10066,9 @@
             },
             "focused": {
               "type": "boolean"
+            },
+            "importance": {
+              "$ref": "#/schemas/success_response/$defs/Importance"
             },
             "label": {
               "type": "string"

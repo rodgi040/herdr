@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::common::AgentStatus;
+use super::common::{AgentStatus, Importance};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkspaceCreateParams {
@@ -27,6 +27,12 @@ pub struct WorkspaceCloseParams {
 pub struct WorkspaceRenameParams {
     pub workspace_id: String,
     pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceImportanceSetParams {
+    pub workspace_id: String,
+    pub importance: Importance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -65,6 +71,8 @@ pub struct WorkspaceInfo {
     pub tab_count: usize,
     pub active_tab_id: String,
     pub agent_status: AgentStatus,
+    #[serde(default, skip_serializing_if = "Importance::is_normal")]
+    pub importance: Importance,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[schemars(schema_with = "super::common::metadata_token_values_schema")]
     pub tokens: HashMap<String, String>,

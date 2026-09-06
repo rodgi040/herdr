@@ -35,9 +35,9 @@ fn indexed_label(bindings: &[crate::config::IndexedKeybind]) -> String {
     let mut parts = Vec::new();
     let mut index = 0;
     while index < bindings.len() {
-        if let Some(prefix) = indexed_range_prefix(&bindings[index..]) {
-            parts.push(format!("{prefix}1..9"));
-            index += 9;
+        if let Some((prefix, len)) = indexed_range_run(&bindings[index..]) {
+            parts.push(format!("{prefix}1..{len}"));
+            index += len;
         } else {
             parts.push(bindings[index].label.clone());
             index += 1;
@@ -47,16 +47,21 @@ fn indexed_label(bindings: &[crate::config::IndexedKeybind]) -> String {
     parts.join(" / ")
 }
 
-fn indexed_range_prefix(bindings: &[crate::config::IndexedKeybind]) -> Option<&str> {
-    let run = bindings.get(..9)?;
-    let prefix = run[0].label.strip_suffix('1')?;
-    for (offset, binding) in run.iter().enumerate() {
-        let digit = char::from(b'1' + offset as u8);
-        if binding.label.strip_suffix(digit) != Some(prefix) {
-            return None;
-        }
-    }
-    Some(prefix)
+/// Detect a run of consecutive `<prefix>1`, `<prefix>2`, … labels (at least two,
+/// at most nine) so ranges such as `prefix+1..9` or `prefix+ctrl+1..3` collapse
+/// into one help entry.
+fn indexed_range_run(bindings: &[crate::config::IndexedKeybind]) -> Option<(&str, usize)> {
+    let prefix = bindings.first()?.label.strip_suffix('1')?;
+    let len = bindings
+        .iter()
+        .take(9)
+        .enumerate()
+        .take_while(|(offset, binding)| {
+            let digit = char::from(b'1' + *offset as u8);
+            binding.label.strip_suffix(digit) == Some(prefix)
+        })
+        .count();
+    (len >= 2).then_some((prefix, len))
 }
 
 pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
@@ -124,9 +129,17 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
         help_entry(keybind_label(&kb.previous_workspace), "previous workspace"),
         help_entry(keybind_label(&kb.next_workspace), "next workspace"),
         help_entry(indexed_label(&kb.switch_workspace), "switch workspace 1-9"),
+        help_entry(
+            indexed_label(&kb.workspace_importance),
+            "space prio (1 high · 2 normal · 3 low)",
+        ),
         help_entry(keybind_label(&kb.previous_agent), "previous agent"),
         help_entry(keybind_label(&kb.next_agent), "next agent"),
         help_entry(indexed_label(&kb.focus_agent), "focus agent 1-9"),
+        help_entry(
+            indexed_label(&kb.agent_importance),
+            "agent prio (1 high · 2 normal · 3 low)",
+        ),
         help_entry(keybind_label(&kb.new_tab), "new tab"),
         help_entry(keybind_label(&kb.rename_tab), "rename tab"),
         help_entry(keybind_label(&kb.previous_tab), "previous tab"),
@@ -422,5 +435,29 @@ mod tests {
         assert_eq!(filtered[0].1[0].1, "close pane");
 
         assert!(filter_keybind_help_groups(groups(), "panes").is_empty());
+    }
+
+    #[test]
+    fn help_lists_importance_keybinds_as_collapsed_ranges() {
+        let kb = crate::config::Config::default().keybinds();
+        assert_eq!(indexed_label(&kb.agent_importance), "prefix+ctrl+1..3");
+        assert_eq!(
+            indexed_label(&kb.workspace_importance),
+            "prefix+ctrl+shift+1..3"
+        );
+        assert_eq!(indexed_label(&kb.switch_tab), "prefix+1..9");
+        assert_eq!(indexed_label(&kb.agent_importance[..1]), "prefix+ctrl+1");
+
+        let groups = keybind_help_groups(&AppState::test_new());
+        let entries: Vec<_> = groups
+            .iter()
+            .flat_map(|(_, entries)| entries.iter())
+            .collect();
+        assert!(entries
+            .iter()
+            .any(|(key, label)| key == "prefix+ctrl+1..3" && label.contains("agent prio")));
+        assert!(entries
+            .iter()
+            .any(|(key, label)| key == "prefix+ctrl+shift+1..3" && label.contains("space prio")));
     }
 }
