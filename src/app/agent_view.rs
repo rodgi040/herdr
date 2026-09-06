@@ -61,19 +61,26 @@ pub(crate) fn apply_agent_view(app: &AppState, entries: &mut Vec<AgentPanelEntry
         }
     }
 
-    if matches!(
-        app.agent_panel_sort,
-        crate::app::state::AgentPanelSort::Priority
-    ) {
-        entries.sort_by_key(|entry| {
-            (
-                std::cmp::Reverse(super::api_helpers::tab_attention_priority(
-                    entry.state,
-                    entry.seen,
-                )),
-                std::cmp::Reverse(entry.last_agent_state_change_seq),
-            )
-        });
+    match app.agent_panel_sort {
+        crate::app::state::AgentPanelSort::Priority => {
+            // User-assigned importance wins, then attention, then most recent
+            // state change. Keys are plain Copy values: this runs every frame.
+            entries.sort_by_key(|entry| {
+                (
+                    std::cmp::Reverse(entry.importance.rank()),
+                    std::cmp::Reverse(super::api_helpers::tab_attention_priority(
+                        entry.state,
+                        entry.seen,
+                    )),
+                    std::cmp::Reverse(entry.last_agent_state_change_seq),
+                )
+            });
+        }
+        crate::app::state::AgentPanelSort::Spaces => {
+            // Grouped mode keeps workspace order but still floats important
+            // agents to the top; the sort is stable so ties keep space order.
+            entries.sort_by_key(|entry| std::cmp::Reverse(entry.importance.rank()));
+        }
     }
 }
 
@@ -193,7 +200,8 @@ fn validate_field_value(field: &AgentViewField, value: &AgentViewValue) -> Resul
                 | AgentViewBuiltinField::WorkspaceId
                 | AgentViewBuiltinField::TabId
                 | AgentViewBuiltinField::PaneId
-                | AgentViewBuiltinField::Agent,
+                | AgentViewBuiltinField::Agent
+                | AgentViewBuiltinField::Importance,
             )
             | AgentViewField::Token { .. },
             AgentViewValue::String(value),
@@ -206,6 +214,13 @@ fn validate_field_value(field: &AgentViewField, value: &AgentViewValue) -> Resul
                 "idle" | "working" | "blocked" | "done" | "unknown"
             ) {
                 return Err(format!("unknown agent status `{value}`"));
+            }
+            if matches!(
+                field,
+                AgentViewField::Builtin(AgentViewBuiltinField::Importance)
+            ) && !matches!(value.as_str(), "high" | "normal" | "low")
+            {
+                return Err(format!("unknown agent importance `{value}`"));
             }
             Ok(())
         }
@@ -322,6 +337,9 @@ fn builtin_field_value(
         AgentViewBuiltinField::StateChangeSeq => {
             entry.last_agent_state_change_seq.map(EvalValue::Number)
         }
+        AgentViewBuiltinField::Importance => {
+            Some(EvalValue::String(entry.importance.label().to_string()))
+        }
     }
 }
 
@@ -383,6 +401,9 @@ fn sort_value(
             AgentViewBuiltinSortField::Seen => Some(EvalValue::Bool(entry.seen)),
             AgentViewBuiltinSortField::StateChangeSeq => {
                 entry.last_agent_state_change_seq.map(EvalValue::Number)
+            }
+            AgentViewBuiltinSortField::Importance => {
+                Some(EvalValue::Number(u64::from(entry.importance.rank())))
             }
         },
     }
@@ -569,5 +590,118 @@ mod tests {
         assert!(validate_agent_view(&mut spec)
             .unwrap_err()
             .contains("context type"));
+    }
+
+    fn set_importance(
+        state: &mut AppState,
+        ws_idx: usize,
+        importance: crate::api::schema::Importance,
+    ) {
+        let pane_id = state.workspaces[ws_idx].tabs[0].root_pane;
+        let terminal_id = state.workspaces[ws_idx].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_importance(importance);
+    }
+
+    fn set_working_with_seq(state: &mut AppState, ws_idx: usize, seq: u64) {
+        let pane_id = state.workspaces[ws_idx].tabs[0].root_pane;
+        let terminal_id = state.workspaces[ws_idx].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.state = AgentState::Working;
+        terminal.last_agent_state_change_seq = Some(seq);
+    }
+
+    fn workspace_order(state: &AppState) -> Vec<usize> {
+        crate::ui::agent_panel_entries(state)
+            .iter()
+            .map(|entry| entry.ws_idx)
+            .collect()
+    }
+
+    #[test]
+    fn priority_sort_puts_user_importance_before_attention() {
+        use crate::api::schema::Importance;
+        let mut state = state_with_agents();
+        state.agent_panel_sort = crate::app::state::AgentPanelSort::Priority;
+        // Working (workspace 1) outranks idle (workspace 0) on attention alone.
+        assert_eq!(workspace_order(&state), vec![1, 0]);
+
+        set_importance(&mut state, 0, Importance::High);
+        assert_eq!(workspace_order(&state), vec![0, 1]);
+
+        // Low sinks below normal even with more attention.
+        set_importance(&mut state, 0, Importance::Normal);
+        set_importance(&mut state, 1, Importance::Low);
+        assert_eq!(workspace_order(&state), vec![0, 1]);
+    }
+
+    #[test]
+    fn priority_sort_breaks_importance_ties_by_attention_then_recency() {
+        use crate::api::schema::Importance;
+        let mut state = state_with_agents();
+        state.agent_panel_sort = crate::app::state::AgentPanelSort::Priority;
+        set_importance(&mut state, 0, Importance::High);
+        set_importance(&mut state, 1, Importance::High);
+        assert_eq!(workspace_order(&state), vec![1, 0]);
+
+        set_working_with_seq(&mut state, 0, 7);
+        set_working_with_seq(&mut state, 1, 3);
+        assert_eq!(workspace_order(&state), vec![0, 1]);
+    }
+
+    #[test]
+    fn grouped_sort_floats_important_agents_but_keeps_space_order_for_ties() {
+        use crate::api::schema::Importance;
+        let mut state = state_with_agents();
+        assert_eq!(workspace_order(&state), vec![0, 1]);
+
+        set_importance(&mut state, 1, Importance::High);
+        assert_eq!(workspace_order(&state), vec![1, 0]);
+
+        set_importance(&mut state, 1, Importance::Normal);
+        set_importance(&mut state, 0, Importance::Low);
+        assert_eq!(workspace_order(&state), vec![1, 0]);
+    }
+
+    #[test]
+    fn plugin_views_can_filter_and_sort_by_importance() {
+        use crate::api::schema::Importance;
+        let mut state = state_with_agents();
+        set_importance(&mut state, 1, Importance::High);
+        state.agent_view_override = Some(AgentViewSetParams {
+            source: "example.views".to_string(),
+            label: None,
+            filter: Some(AgentViewFilter::Eq {
+                field: AgentViewField::Builtin(AgentViewBuiltinField::Importance),
+                value: AgentViewValue::String("high".to_string()),
+            }),
+            sort: vec![AgentViewSort {
+                field: AgentViewSortField::Builtin(AgentViewBuiltinSortField::Importance),
+                order: AgentViewSortOrder::Desc,
+            }],
+        });
+        let entries = crate::ui::agent_panel_entries(&state);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].ws_idx, 1);
+
+        let mut spec = AgentViewSetParams {
+            source: "example.views".to_string(),
+            label: None,
+            filter: Some(AgentViewFilter::Eq {
+                field: AgentViewField::Builtin(AgentViewBuiltinField::Importance),
+                value: AgentViewValue::String("urgent".to_string()),
+            }),
+            sort: Vec::new(),
+        };
+        assert!(validate_agent_view(&mut spec)
+            .unwrap_err()
+            .contains("importance"));
     }
 }

@@ -3,8 +3,8 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::api::schema::{
-    AgentPromptParams, AgentRenameParams, AgentSendKeysParams, AgentStartParams, AgentTarget,
-    PaneReadResult, ResponseResult,
+    AgentImportanceSetParams, AgentPromptParams, AgentRenameParams, AgentSendKeysParams,
+    AgentStartParams, AgentTarget, PaneReadResult, ResponseResult,
 };
 use crate::app::App;
 
@@ -45,6 +45,19 @@ impl App {
         let agent = match self.rename_agent_target(&params.target, params.name) {
             Ok(agent) => agent,
             Err(err) => return encode_error_body(id, self.agent_rename_error_body(err)),
+        };
+
+        encode_success(id, ResponseResult::AgentInfo { agent })
+    }
+
+    pub(super) fn handle_agent_importance_set(
+        &mut self,
+        id: String,
+        params: AgentImportanceSetParams,
+    ) -> String {
+        let agent = match self.set_agent_importance_target(&params.target, params.importance) {
+            Ok(agent) => agent,
+            Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
         };
 
         encode_success(id, ResponseResult::AgentInfo { agent })
@@ -627,5 +640,53 @@ mod tests {
                 Some("shell-pane")
             );
         }
+    }
+
+    #[test]
+    fn agent_importance_set_updates_the_terminal_and_rejects_non_agents() {
+        use crate::api::schema::Importance;
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let target = app.public_pane_id(0, pane_id).unwrap();
+
+        // A plain shell pane is not an agent target.
+        let response = app.handle_agent_importance_set(
+            "req".into(),
+            AgentImportanceSetParams {
+                target: target.clone(),
+                importance: Importance::High,
+            },
+        );
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "agent_not_found");
+        assert_eq!(
+            app.state.terminals[&terminal_id].importance,
+            Importance::Normal
+        );
+
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Pi), AgentState::Idle);
+        let response = app.handle_agent_importance_set(
+            "req".into(),
+            AgentImportanceSetParams {
+                target,
+                importance: Importance::High,
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::AgentInfo { agent } = success.result else {
+            panic!("expected agent info response");
+        };
+        assert_eq!(agent.importance, Importance::High);
+        assert_eq!(
+            app.state.terminals[&terminal_id].importance,
+            Importance::High
+        );
     }
 }

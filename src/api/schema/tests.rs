@@ -741,6 +741,7 @@ fn worktree_request_and_response_round_trip() {
                 tab_count: 1,
                 active_tab_id: "w_1:1".into(),
                 agent_status: AgentStatus::Unknown,
+                importance: Default::default(),
                 tokens: HashMap::new(),
                 worktree: Some(WorkspaceWorktreeInfo {
                     repo_key: "/repo/herdr/.git".into(),
@@ -774,6 +775,7 @@ fn worktree_request_and_response_round_trip() {
                 terminal_title_stripped: None,
                 display_agent: None,
                 agent_status: AgentStatus::Unknown,
+                importance: Default::default(),
                 state_labels: HashMap::new(),
                 tokens: HashMap::new(),
                 agent_session: None,
@@ -827,6 +829,7 @@ fn worktree_lifecycle_events_round_trip() {
         tab_count: 1,
         active_tab_id: "w_2:1".into(),
         agent_status: AgentStatus::Unknown,
+        importance: Default::default(),
         tokens: HashMap::new(),
         worktree: Some(WorkspaceWorktreeInfo {
             repo_key: "/repo/herdr/.git".into(),
@@ -1202,6 +1205,7 @@ fn create_response_round_trips_with_root_pane() {
                 terminal_title_stripped: None,
                 display_agent: None,
                 agent_status: AgentStatus::Unknown,
+                importance: Default::default(),
                 state_labels: HashMap::new(),
                 tokens: HashMap::new(),
                 agent_session: None,
@@ -1347,4 +1351,76 @@ fn popup_close_request_round_trips() {
 
     assert_eq!(json["method"], "popup.close");
     assert_eq!(json["params"], serde_json::json!({}));
+}
+
+#[test]
+fn importance_requests_round_trip() {
+    let agent_json = serde_json::json!({
+        "id": "agent-importance",
+        "method": "agent.importance.set",
+        "params": {"target": "reviewer", "importance": "high"}
+    });
+    let request: Request = serde_json::from_value(agent_json.clone()).unwrap();
+    assert!(matches!(
+        request.method,
+        Method::AgentImportanceSet(AgentImportanceSetParams {
+            importance: Importance::High,
+            ..
+        })
+    ));
+    assert_eq!(serde_json::to_value(request).unwrap(), agent_json);
+
+    let workspace_json = serde_json::json!({
+        "id": "space-importance",
+        "method": "workspace.importance.set",
+        "params": {"workspace_id": "w_1", "importance": "low"}
+    });
+    let request: Request = serde_json::from_value(workspace_json.clone()).unwrap();
+    assert!(matches!(
+        request.method,
+        Method::WorkspaceImportanceSet(WorkspaceImportanceSetParams {
+            importance: Importance::Low,
+            ..
+        })
+    ));
+    assert_eq!(serde_json::to_value(request).unwrap(), workspace_json);
+
+    let invalid = serde_json::json!({
+        "id": "bad",
+        "method": "agent.importance.set",
+        "params": {"target": "reviewer", "importance": "urgent"}
+    });
+    assert!(serde_json::from_value::<Request>(invalid).is_err());
+}
+
+#[test]
+fn importance_defaults_to_normal_and_is_omitted_on_the_wire() {
+    let mut info = WorkspaceInfo {
+        workspace_id: "w_1".into(),
+        number: 1,
+        label: "herdr".into(),
+        focused: false,
+        pane_count: 1,
+        tab_count: 1,
+        active_tab_id: "w_1:1".into(),
+        agent_status: AgentStatus::Unknown,
+        importance: Importance::default(),
+        tokens: HashMap::new(),
+        worktree: None,
+    };
+    let json = serde_json::to_value(&info).unwrap();
+    assert!(json.get("importance").is_none());
+    let restored: WorkspaceInfo = serde_json::from_value(json).unwrap();
+    assert_eq!(restored.importance, Importance::Normal);
+
+    info.importance = Importance::High;
+    let json = serde_json::to_value(&info).unwrap();
+    assert_eq!(json["importance"], "high");
+
+    assert!(Importance::High.rank() > Importance::Normal.rank());
+    assert!(Importance::Normal.rank() > Importance::Low.rank());
+    assert_eq!(Importance::from_key_index(0), Some(Importance::High));
+    assert_eq!(Importance::from_key_index(1), Some(Importance::Normal));
+    assert_eq!(Importance::from_key_index(2), Some(Importance::Low));
+    assert_eq!(Importance::from_key_index(3), None);
 }

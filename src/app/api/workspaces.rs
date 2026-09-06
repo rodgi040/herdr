@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCloseParams,
-    WorkspaceCreateParams, WorkspaceMoveBlockParams, WorkspaceMoveParams, WorkspaceRenameParams,
-    WorkspaceReportMetadataParams, WorkspaceTarget,
+    WorkspaceCreateParams, WorkspaceImportanceSetParams, WorkspaceMoveBlockParams,
+    WorkspaceMoveParams, WorkspaceRenameParams, WorkspaceReportMetadataParams, WorkspaceTarget,
 };
 use crate::app::App;
 
@@ -109,6 +109,36 @@ impl App {
                 label: params.label,
             },
         });
+
+        encode_success(
+            id,
+            ResponseResult::WorkspaceInfo {
+                workspace: self.workspace_info(index),
+            },
+        )
+    }
+
+    pub(super) fn handle_workspace_importance_set(
+        &mut self,
+        id: String,
+        params: WorkspaceImportanceSetParams,
+    ) -> String {
+        let Some(index) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        let Some(ws) = self.state.workspaces.get_mut(index) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        if ws.set_importance(params.importance) {
+            self.state.mark_session_dirty();
+            self.schedule_session_save();
+            self.emit_event(EventEnvelope {
+                event: EventKind::WorkspaceUpdated,
+                data: EventData::WorkspaceUpdated {
+                    workspace: self.workspace_info(index),
+                },
+            });
+        }
 
         encode_success(
             id,
@@ -844,5 +874,51 @@ mod tests {
         };
         assert_eq!(workspaces[0].workspace_id, moved_id);
         assert!(event_hub.events_after(0).is_empty());
+    }
+
+    #[test]
+    fn workspace_importance_set_updates_the_space_and_reports_it() {
+        use crate::api::schema::Importance;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("spaces")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        let workspace_id = app.public_workspace_id(0);
+
+        let response = app.handle_workspace_importance_set(
+            "req".into(),
+            WorkspaceImportanceSetParams {
+                workspace_id,
+                importance: Importance::Low,
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceInfo { workspace } = success.result else {
+            panic!("expected workspace info response");
+        };
+        assert_eq!(workspace.importance, Importance::Low);
+        assert_eq!(app.state.workspaces[0].importance, Importance::Low);
+
+        let response = app.handle_workspace_importance_set(
+            "req".into(),
+            WorkspaceImportanceSetParams {
+                workspace_id: "w_missing".into(),
+                importance: Importance::High,
+            },
+        );
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert!(
+            error.error.code.contains("not_found"),
+            "{}",
+            error.error.code
+        );
     }
 }

@@ -142,6 +142,30 @@ impl App {
             })
     }
 
+    pub(super) fn set_agent_importance_target(
+        &mut self,
+        target: &str,
+        importance: crate::api::schema::Importance,
+    ) -> Result<crate::api::schema::AgentInfo, TerminalTargetError> {
+        let resolved = self.resolve_agent_target(target)?;
+        let not_found = || TerminalTargetError::NotFound {
+            target: target.to_string(),
+        };
+        let terminal = self
+            .state
+            .terminals
+            .values_mut()
+            .find(|terminal| terminal.id.to_string() == resolved.terminal_id)
+            .ok_or_else(not_found)?;
+        if terminal.set_importance(importance) {
+            self.state.mark_session_dirty();
+            self.schedule_session_save();
+            self.emit_pane_updated(resolved.ws_idx, resolved.pane_id);
+        }
+        self.agent_info(resolved.ws_idx, resolved.pane_id)
+            .ok_or_else(not_found)
+    }
+
     pub(super) fn start_agent(
         &mut self,
         params: AgentStartParams,
@@ -379,6 +403,7 @@ impl App {
             terminal_title_stripped: pane.terminal_title_stripped,
             display_agent: pane.display_agent,
             agent_status: pane.agent_status,
+            importance: pane.importance,
             screen_detection_skipped: terminal.full_lifecycle_hook_authority_active(),
             state_labels: pane.state_labels,
             tokens: pane.tokens,

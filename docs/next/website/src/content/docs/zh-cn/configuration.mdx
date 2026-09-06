@@ -174,7 +174,21 @@ switch_workspace = "prefix+shift+1..9"
 focus_agent = "prefix+alt+1..9"
 ```
 
+范围也可以在 9 之前结束：`1..3` 只绑定前三个数字。优先级快捷键就使用这种形式：
+
+```toml
+[keys]
+agent_importance = "prefix+ctrl+1..3"
+workspace_importance = "prefix+ctrl+shift+1..3"
+```
+
 旧版 `[keys.indexed]` 表仍会出于兼容性而解析，但新配置应优先使用显式的动作字段。
+
+## 代理与空间优先级
+
+代理和空间都带有用户设置的优先级：`high`、`normal`（默认）和 `low`。按下优先级快捷键时，`1` 为 high，`2` 为 normal，`3` 为 low；代理快捷键作用于当前聚焦的代理，空间快捷键作用于活动空间（在导航模式下则是选中的空间）。
+
+侧边栏优先按优先级排序：high 的代理会排在关注度顺序之上；一个空间块（父项及其 worktree 子项）作为整体移动，并按其中最高的优先级排序。high 的代理标记为 `▲`，low 的代理标记为 `▽`；每个空间行都带有编号徽章，high 时高亮，low 时变暗。优先级会在重启后保留，也可以通过 API 的 `agent.importance.set` 和 `workspace.importance.set` 设置。
 
 ## 自定义命令按键绑定
 

@@ -1021,6 +1021,9 @@ impl App {
             Method::WorkspaceRename(params) => {
                 return self.handle_workspace_rename(request.id, params);
             }
+            Method::WorkspaceImportanceSet(params) => {
+                return self.handle_workspace_importance_set(request.id, params);
+            }
             Method::WorkspaceMove(params) => {
                 return self.handle_workspace_move(request.id, params);
             }
@@ -1065,6 +1068,9 @@ impl App {
             Method::AgentViewSet(params) => return self.handle_agent_view_set(request.id, params),
             Method::AgentViewClear(params) => {
                 return self.handle_agent_view_clear(request.id, params)
+            }
+            Method::AgentImportanceSet(params) => {
+                return self.handle_agent_importance_set(request.id, params);
             }
             Method::AgentStart(params) => return self.handle_agent_start(request.id, params),
             Method::AgentPrompt(params) => return self.handle_agent_prompt(request.id, params),

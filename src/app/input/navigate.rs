@@ -243,6 +243,39 @@ impl App {
                     leave_navigate_mode(&mut self.state);
                 }
             }
+            NavigateAction::SetAgentImportance(idx) => {
+                // Target is the focused pane; the API rejects non-agent panes,
+                // which is the intended no-op for plain shells.
+                let target = self.state.active.and_then(|ws_idx| {
+                    let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                    self.public_pane_id(ws_idx, pane_id)
+                });
+                if let (Some(importance), Some(target)) =
+                    (crate::api::schema::Importance::from_key_index(idx), target)
+                {
+                    self.runtime_agent_importance_set(
+                        "tui.key.agent.importance",
+                        crate::api::schema::AgentImportanceSetParams { target, importance },
+                    );
+                }
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::SetWorkspaceImportance(idx) => {
+                if let (Some(importance), Some(ws_idx)) = (
+                    crate::api::schema::Importance::from_key_index(idx),
+                    workspace_action_target(&self.state, context),
+                ) {
+                    let workspace_id = self.public_workspace_id(ws_idx);
+                    self.runtime_workspace_importance_set(
+                        "tui.key.workspace.importance",
+                        crate::api::schema::WorkspaceImportanceSetParams {
+                            workspace_id,
+                            importance,
+                        },
+                    );
+                }
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::WorkspacePicker => {
                 self.state.mobile_switcher_scroll = 0;
                 self.state.mode = Mode::Navigate;
@@ -1413,6 +1446,8 @@ pub(crate) enum NavigateAction {
     SwitchWorkspace(usize),
     SwitchTab(usize),
     FocusAgent(usize),
+    SetAgentImportance(usize),
+    SetWorkspaceImportance(usize),
     WorkspacePicker,
     PreviousWorkspace,
     NextWorkspace,
@@ -1463,6 +1498,8 @@ fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
         NavigateAction::SwitchWorkspace(_)
             | NavigateAction::SwitchTab(_)
             | NavigateAction::FocusAgent(_)
+            | NavigateAction::SetAgentImportance(_)
+            | NavigateAction::SetWorkspaceImportance(_)
             | NavigateAction::PreviousWorkspace
             | NavigateAction::NextWorkspace
             | NavigateAction::PreviousAgent
@@ -1516,6 +1553,20 @@ fn indexed_navigation_action(
             if trigger_matches(binding) {
                 if let Some(idx) = binding.matched_index(key) {
                     return Some(NavigateAction::FocusAgent(idx));
+                }
+            }
+        }
+        for binding in &kb.agent_importance {
+            if trigger_matches(binding) {
+                if let Some(idx) = binding.matched_index(key) {
+                    return Some(NavigateAction::SetAgentImportance(idx));
+                }
+            }
+        }
+        for binding in &kb.workspace_importance {
+            if trigger_matches(binding) {
+                if let Some(idx) = binding.matched_index(key) {
+                    return Some(NavigateAction::SetWorkspaceImportance(idx));
                 }
             }
         }
@@ -1732,6 +1783,33 @@ pub(super) fn execute_navigate_action_in_context(
             if state.focus_agent_entry(idx) {
                 leave_navigate_mode(state);
             }
+        }
+        NavigateAction::SetAgentImportance(idx) => {
+            let terminal_id = state.active.and_then(|ws_idx| {
+                let ws = state.workspaces.get(ws_idx)?;
+                ws.terminal_id(ws.focused_pane_id()?).cloned()
+            });
+            if let (Some(importance), Some(terminal)) = (
+                crate::api::schema::Importance::from_key_index(idx),
+                terminal_id.and_then(|id| state.terminals.get_mut(&id)),
+            ) {
+                if terminal.set_importance(importance) {
+                    state.mark_session_dirty();
+                }
+            }
+            leave_navigate_mode(state);
+        }
+        NavigateAction::SetWorkspaceImportance(idx) => {
+            if let (Some(importance), Some(ws)) = (
+                crate::api::schema::Importance::from_key_index(idx),
+                workspace_action_target(state, context)
+                    .and_then(|ws_idx| state.workspaces.get_mut(ws_idx)),
+            ) {
+                if ws.set_importance(importance) {
+                    state.mark_session_dirty();
+                }
+            }
+            leave_navigate_mode(state);
         }
         NavigateAction::WorkspacePicker => {
             state.mobile_switcher_scroll = 0;
@@ -3894,5 +3972,89 @@ navigate_pane_down = "ctrl+j"
 
         assert!(state.detach_requested);
         assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn prefix_ctrl_digits_map_to_importance_actions() {
+        let state = state_with_workspaces(&["test"]);
+        assert_eq!(
+            action_for_key(
+                &state,
+                TerminalKey::new(KeyCode::Char('1'), KeyModifiers::CONTROL),
+                BindingDispatch::Prefix,
+            ),
+            Some(NavigateAction::SetAgentImportance(0))
+        );
+        assert_eq!(
+            action_for_key(
+                &state,
+                TerminalKey::new(KeyCode::Char('3'), KeyModifiers::CONTROL),
+                BindingDispatch::Prefix,
+            ),
+            Some(NavigateAction::SetAgentImportance(2))
+        );
+        assert_eq!(
+            action_for_key(
+                &state,
+                TerminalKey::new(
+                    KeyCode::Char('2'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                BindingDispatch::Prefix,
+            ),
+            Some(NavigateAction::SetWorkspaceImportance(1))
+        );
+        // Plain digits still switch tabs.
+        assert_eq!(
+            action_for_key(
+                &state,
+                TerminalKey::new(KeyCode::Char('1'), KeyModifiers::empty()),
+                BindingDispatch::Prefix,
+            ),
+            Some(NavigateAction::SwitchTab(0))
+        );
+    }
+
+    #[test]
+    fn importance_actions_update_focused_agent_and_target_space() {
+        use crate::api::schema::Importance;
+        let mut state = state_with_workspaces(&["one", "two"]);
+        state.ensure_test_terminals();
+        state.mode = Mode::Terminal;
+        let mut runtimes = TerminalRuntimeRegistry::new();
+
+        execute_navigate_action_in_context(
+            &mut state,
+            &mut runtimes,
+            NavigateAction::SetAgentImportance(0),
+            ActionContext::Prefix,
+        );
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        assert_eq!(state.terminals[&terminal_id].importance, Importance::High);
+
+        // Prefix context targets the active space, navigate context the selected one.
+        state.active = Some(0);
+        state.selected = 1;
+        execute_navigate_action_in_context(
+            &mut state,
+            &mut runtimes,
+            NavigateAction::SetWorkspaceImportance(2),
+            ActionContext::Prefix,
+        );
+        assert_eq!(state.workspaces[0].importance, Importance::Low);
+        assert_eq!(state.workspaces[1].importance, Importance::Normal);
+
+        state.mode = Mode::Navigate;
+        execute_navigate_action_in_context(
+            &mut state,
+            &mut runtimes,
+            NavigateAction::SetWorkspaceImportance(0),
+            ActionContext::Navigate,
+        );
+        assert_eq!(state.workspaces[1].importance, Importance::High);
+        assert_eq!(state.workspaces[0].importance, Importance::Low);
     }
 }

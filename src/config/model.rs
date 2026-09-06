@@ -388,6 +388,8 @@ pub struct KeysConfig {
     pub next_agent: BindingConfig,
     /// Focus an agent by index 1-9. Unset by default.
     pub focus_agent: BindingConfig,
+    /// Set the focused agent's priority: 1 = high, 2 = normal, 3 = low. Default: "prefix+ctrl+1..3".
+    pub agent_importance: BindingConfig,
     /// Local-client shortcut that sends a clipboard image to a remote Herdr session. Default: "ctrl+v".
     pub remote_image_paste: String,
     /// Create a new tab in the active workspace. Default: "prefix+c"
@@ -406,6 +408,8 @@ pub struct KeysConfig {
     pub switch_tab: BindingConfig,
     /// Switch to workspace 1-9 from prefix mode. Unset by default.
     pub switch_workspace: BindingConfig,
+    /// Set the active (or selected) space's priority: 1 = high, 2 = normal, 3 = low. Default: "prefix+ctrl+shift+1..3".
+    pub workspace_importance: BindingConfig,
     /// Close the active tab. Default: "prefix+shift+x".
     pub close_tab: BindingConfig,
     /// Rename the focused pane. Default: "prefix+shift+p".
@@ -520,6 +524,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     focus_agent: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    agent_importance: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     remote_image_paste: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     new_tab: Option<BindingConfig>,
@@ -537,6 +543,8 @@ pub(crate) struct KeysConfigOverlay {
     switch_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     switch_workspace: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_importance: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     close_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -635,6 +643,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(previous_agent);
         apply_field!(next_agent);
         apply_field!(focus_agent);
+        apply_field!(agent_importance);
         apply_field!(remote_image_paste);
         apply_field!(new_tab);
         apply_field!(rename_tab);
@@ -644,6 +653,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(move_tab_next);
         apply_field!(switch_tab);
         apply_field!(switch_workspace);
+        apply_field!(workspace_importance);
         apply_field!(close_tab);
         apply_field!(rename_pane);
         apply_field!(edit_scrollback);
@@ -739,6 +749,7 @@ impl KeysConfig {
         copy_effective_action_field!(previous_agent, keybinds.previous_agent);
         copy_effective_action_field!(next_agent, keybinds.next_agent);
         copy_effective_indexed_field!(focus_agent, keybinds.focus_agent);
+        copy_effective_indexed_field!(agent_importance, keybinds.agent_importance);
         copy_user_field!(remote_image_paste);
         copy_effective_action_field!(new_tab, keybinds.new_tab);
         copy_effective_action_field!(rename_tab, keybinds.rename_tab);
@@ -748,6 +759,7 @@ impl KeysConfig {
         copy_effective_action_field!(move_tab_next, keybinds.move_tab_next);
         copy_effective_indexed_field!(switch_tab, keybinds.switch_tab);
         copy_effective_indexed_field!(switch_workspace, keybinds.switch_workspace);
+        copy_effective_indexed_field!(workspace_importance, keybinds.workspace_importance);
         copy_effective_action_field!(close_tab, keybinds.close_tab);
         copy_effective_action_field!(rename_pane, keybinds.rename_pane);
         copy_effective_action_field!(edit_scrollback, keybinds.edit_scrollback);
@@ -1049,6 +1061,7 @@ impl Default for KeysConfig {
             previous_agent: BindingConfig::empty(),
             next_agent: BindingConfig::empty(),
             focus_agent: BindingConfig::empty(),
+            agent_importance: BindingConfig::one("prefix+ctrl+1..3"),
             remote_image_paste: "ctrl+v".into(),
             new_tab: BindingConfig::one("prefix+c"),
             rename_tab: BindingConfig::one("prefix+shift+t"),
@@ -1058,6 +1071,7 @@ impl Default for KeysConfig {
             move_tab_next: BindingConfig::empty(),
             switch_tab: BindingConfig::one("prefix+1..9"),
             switch_workspace: BindingConfig::empty(),
+            workspace_importance: BindingConfig::one("prefix+ctrl+shift+1..3"),
             close_tab: BindingConfig::one("prefix+shift+x"),
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),
